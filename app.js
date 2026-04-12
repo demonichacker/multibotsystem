@@ -669,11 +669,8 @@ async function spawnBot(botConfig) {
 	process.on('SIGINT', () => { console.log('[SHUTDOWN] SIGINT received. Exiting...'); process.exit(0); });
 	process.on('SIGTERM', () => { console.log('[SHUTDOWN] SIGTERM received. Exiting...'); process.exit(0); });
 
-	// Start the bot with Cloud Settle Delay
-	console.log(`[BOOT] Settle period active. Waiting 5 seconds...`);
-	await new Promise(resolve => setTimeout(resolve, 5000));
-	console.log(`[BOOT] Settle period complete. Logging in...`);
-	bot.login(token, roomId);
+	// Bot connection is now handled externally via staggered boot in bootstrapMultiBot
+	// bot.login(token, roomId);
 
 	// -----------------------
 	// Command Router (minimal)
@@ -2457,9 +2454,17 @@ async function bootstrapMultiBot() {
 		}
 
 		console.log(`🤖 Booting ${bots.length} persistent bots...`);
+		let index = 0;
 		for (const b of bots) {
-			await spawnBot(b);
-			await new Promise(r => setTimeout(r, 2000));
+			const botInstance = spawnBot(b);
+			// Stagger each bot: 5s + (index * 10s) to prevent multilogin
+			const staggerDelay = 5000 + (index * 10000);
+			setTimeout(() => {
+				if (botInstance && typeof botInstance.login === 'function') {
+					botInstance.login(b.token, b.roomId);
+				}
+			}, staggerDelay);
+			index++;
 		}
 	} catch (e) { console.error("❌ MongoDB Boot Failed:", e.message); }
 }
