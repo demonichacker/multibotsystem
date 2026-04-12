@@ -346,6 +346,10 @@ async function spawnBot(botConfig) {
 				}
 			}, 1000);
 		}
+
+		// Boot phase complete - allow normal reconnect behavior
+		bootPhase = false;
+		console.log(`[BOOT] ${botName} boot phase complete.`);
 	});
 
 	const activeBotSetups = {};
@@ -605,6 +609,8 @@ async function spawnBot(botConfig) {
 		if (user?.id) stopEmoteForUser(user.id);
 	});
 
+	let bootPhase = true; // Flag to suppress reconnect during initial boot
+
 	bot.on('error', (message) => {
 		const msg = String(message || '').toLowerCase();
 
@@ -612,8 +618,14 @@ async function spawnBot(botConfig) {
 		// This error is a common SDK race condition and isn't usually critical.
 		if (msg.includes('target user not in room')) return;
 
-		if (msg.includes('multilogin')) {
-			console.warn('[SESSION] Multilogin detected. Waiting 20 seconds for other session to clear...');
+		// During boot phase, handle multilogin gracefully without aggressive reconnect
+		if (msg.includes('multilogin') && bootPhase) {
+			console.warn(`[BOOT] ${botName} multilogin detected during boot. Will retry manually...`);
+			setTimeout(() => {
+				console.log(`[BOOT] ${botName} retrying connection...`);
+				bot.login(token, bot.roomId || roomId);
+			}, 15000); // Wait 15s before retry during boot
+			return;
 		}
 
 		console.error(`[ERROR] ${message}`);
