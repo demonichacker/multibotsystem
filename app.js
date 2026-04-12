@@ -1329,7 +1329,12 @@ async function spawnBot(botConfig) {
 		"touch": "dance-touch",
 		"airguitar": "idle-guitar",
 		"gift": "emote-gift",
-		"pushit": "dance-employee"
+		"pushit": "dance-employee",
+		"stormgroove": "emote-rainstruck-success",
+		"stormmood": "emote-rainstruck-fail",
+		"bloomflutter": "emote-bloomify-pose1",
+		"bloomcharm": "emote-bloomify-pose2",
+		"bloomradiance": "emote-bloomify-pose3"
 	};
 	const EMOTE_KEYS = Object.keys(EMOTE_MAP);
 	const EMOTE_LIST = Object.values(EMOTE_MAP);
@@ -1370,7 +1375,12 @@ async function spawnBot(botConfig) {
 		'dance-paparazzi': 5000,
 		'dance-russian': 5000,
 		'dance-voguehands': 4500,
-		'dance-weird': 5000
+		'dance-weird': 5000,
+		'emote-rainstruck-success': 4000,
+		'emote-rainstruck-fail': 10000,
+		'emote-bloomify-pose1': 3000,
+		'emote-bloomify-pose2': 3000,
+		'emote-bloomify-pose3': 3000
 	};
 
 	const cooldowns = new Map(); // per-bot, declared inside spawnBot closure
