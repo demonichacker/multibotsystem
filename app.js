@@ -300,13 +300,13 @@ async function spawnBot(botConfig) {
 	GLOBAL_BOTS.push(bot);
 
 
-	bot.on('ready', async (session) => {
-		console.log(`[READY] ${botName} connected. Session: ${session?.sessionId || 'unknown'}`);
+	bot.on('ready', (session) => {
+		console.log(`[READY] Bot connected. Session: ${session?.sessionId || 'unknown'}`);
 		// Cache the bot's user ID and room owner ID
 		try {
 			botUserId = session.user_id;
 			roomOwnerId = session.room_info.owner_id;
-			console.log(`[INFO] ${botName} ID cached: ${botUserId}`);
+			console.log(`[INFO] Bot ID cached: ${botUserId}`);
 			console.log(`[INFO] Room Owner ID: ${roomOwnerId}`);
 		} catch (e) {
 			console.warn('Could not cache IDs on ready:', e);
@@ -316,40 +316,17 @@ async function spawnBot(botConfig) {
 		state.lastGoodRoomId = bot.roomId;
 		saveState();
 
-		// --- MEMBERSHIP CHECK LOOP ---
-        // Prevents "Not in room" errors by waiting until the bot is physically present
-		let confirmed = false;
-        let attempts = 0;
-        while (!confirmed && attempts < 10) {
-            try {
-                const players = await bot.room.players.fetch();
-                if (players.some(([u]) => u.id === botUserId)) {
-                    confirmed = true;
-                } else {
-                    console.log(`[WAIT] ${botName} waiting for room entry... (${attempts + 1}/10)`);
-                    await new Promise(r => setTimeout(r, 2000));
-                }
-            } catch (e) {
-                await new Promise(r => setTimeout(r, 2000));
-            }
-            attempts++;
-        }
-
 		const roomState = getRoomData(bot.roomId, state);
 		if (roomState.spawnPos && roomState.spawnPos.x !== undefined) {
 			setTimeout(async () => {
 				try {
 					await bot.move.walk(roomState.spawnPos.x, roomState.spawnPos.y, roomState.spawnPos.z, roomState.spawnPos.facing || 'FrontRight');
-					console.log(`[INFO] ${botName} successfully walked to default spawnPos`);
+					console.log('[INFO] Bot successfully walked to default spawnPos');
 				} catch (e) {
-					console.error(`[ERROR] ${botName} failed to walk to spawnPos:`, e.message);
+					console.error('[ERROR] Failed to walk to spawnPos:', e);
 				}
-			}, 1000);
+			}, 2500);
 		}
-
-		// Boot phase complete - allow normal reconnect behavior
-		bootPhase = false;
-		console.log(`[BOOT] ${botName} boot phase complete.`);
 	});
 
 	const activeBotSetups = {};
@@ -395,20 +372,14 @@ async function spawnBot(botConfig) {
 
 						console.log(`[ROOM-TRANSFER] Database updated for ${botConfig.name}! Fast-swapping...`);
 
-						try { bot.direct.send(conversation.id, "Link Processed! Transferring the bot to the new room now... 🚀"); } catch (e) { }
+						try { bot.direct.send(conversation.id, "Link Processed! Transferring the bot to the new room now... 🚀 (If I fail, I will automatically return here.)"); } catch (e) { }
 
-						setTimeout(async () => {
-							try {
-                                if (typeof bot.transfer === 'function') {
-                                    await bot.transfer(newRoomId);
-                                } else {
-                                    // Fallback
-                                    bot.roomId = newRoomId;
-                                    bot.logout();
-                                }
-                            } catch (e) {
-                                console.error(`[ROOM-TRANSFER-EXEC-ERR]`, e);
-                            }
+						setTimeout(() => {
+							console.log(`[ROOM-TRANSFER] Jumping to Room: ${newRoomId}`);
+							botConfig.roomId = newRoomId; // Update local config
+							bot.roomId = newRoomId; // Update target
+							bot.connected = false;   // Reset internal connection state
+							if (bot.ws) bot.ws.close(); // Force the SDK to disconnect and trigger auto-reconnect logic
 						}, 2000);
 						return;
 					}
@@ -609,8 +580,6 @@ async function spawnBot(botConfig) {
 		if (user?.id) stopEmoteForUser(user.id);
 	});
 
-	let bootPhase = true; // Flag to suppress reconnect during initial boot
-
 	bot.on('error', (message) => {
 		const msg = String(message || '').toLowerCase();
 
@@ -618,14 +587,8 @@ async function spawnBot(botConfig) {
 		// This error is a common SDK race condition and isn't usually critical.
 		if (msg.includes('target user not in room')) return;
 
-		// During boot phase, handle multilogin gracefully without aggressive reconnect
-		if (msg.includes('multilogin') && bootPhase) {
-			console.warn(`[BOOT] ${botName} multilogin detected during boot. Will retry manually...`);
-			setTimeout(() => {
-				console.log(`[BOOT] ${botName} retrying connection...`);
-				bot.login(token, bot.roomId || roomId);
-			}, 15000); // Wait 15s before retry during boot
-			return;
+		if (msg.includes('multilogin')) {
+			console.warn('[SESSION] Multilogin detected. Waiting 20 seconds for other session to clear...');
 		}
 
 		console.error(`[ERROR] ${message}`);
@@ -706,41 +669,11 @@ async function spawnBot(botConfig) {
 	process.on('SIGINT', () => { console.log('[SHUTDOWN] SIGINT received. Exiting...'); process.exit(0); });
 	process.on('SIGTERM', () => { console.log('[SHUTDOWN] SIGTERM received. Exiting...'); process.exit(0); });
 
-	// --- CONNECTION LIFECYCLE ---
-	async function connectWithStagger(delayMs) {
-		console.log(`[BOOT] ${botName} staggered delay: ${delayMs / 1000}s...`);
-		await new Promise(resolve => setTimeout(resolve, delayMs));
-		console.log(`[BOOT] ${botName} logging in...`);
-		bot.login(token, bot.roomId || roomId);
-	}
-
-	async function transferToRoom(newRoomId) {
-		console.log(`[TRANSFER] ${botName} moving to: ${newRoomId}`);
-		try {
-			bot.logout();
-			botConfig.roomId = newRoomId;
-			bot.roomId = newRoomId;
-			bot.connected = false;
-			
-			// Significant wait to allow Highrise to clear the previous session
-			console.log(`[TRANSFER] Waiting 10s for session clear...`);
-			await new Promise(resolve => setTimeout(resolve, 10000));
-			
-			bot.login(token, newRoomId);
-		} catch (e) {
-			console.error(`[TRANSFER ERROR] ${botName}:`, e.message);
-		}
-	}
-
-	bot.transfer = transferToRoom;
-    bot.terminate = async (reason) => {
-        console.log(`[TERMINATE] ${botName} reason: ${reason}`);
-        saveState();
-        try { bot.logout(); } catch(e){}
-    };
-
-	// Start the initial connection (will be triggered by bootAllBots)
-    bot.boot = connectWithStagger;
+	// Start the bot with Cloud Settle Delay
+	console.log(`[BOOT] Settle period active. Waiting 5 seconds...`);
+	await new Promise(resolve => setTimeout(resolve, 5000));
+	console.log(`[BOOT] Settle period complete. Logging in...`);
+	bot.login(token, roomId);
 
 	// -----------------------
 	// Command Router (minimal)
@@ -2498,7 +2431,6 @@ async function spawnBot(botConfig) {
 		}
 	};
 
-	return bot;
 } // End of spawnBot()
 
 async function bootstrapMultiBot() {
@@ -2525,15 +2457,9 @@ async function bootstrapMultiBot() {
 		}
 
 		console.log(`🤖 Booting ${bots.length} persistent bots...`);
-		let index = 0;
 		for (const b of bots) {
-			const bInstance = await spawnBot(b);
-            // Each bot waits 5s + (index * 5s) to prevent multilogin clashes and server spikes
-            const staggerDelay = 5000 + (index * 5000);
-            if (bInstance && typeof bInstance.boot === 'function') {
-                bInstance.boot(staggerDelay);
-            }
-            index++;
+			await spawnBot(b);
+			await new Promise(r => setTimeout(r, 2000));
 		}
 	} catch (e) { console.error("❌ MongoDB Boot Failed:", e.message); }
 }
