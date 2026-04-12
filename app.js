@@ -2428,6 +2428,8 @@ async function spawnBot(botConfig) {
 		}
 	};
 
+	return bot;
+
 } // End of spawnBot()
 
 async function bootstrapMultiBot() {
@@ -2459,9 +2461,13 @@ async function bootstrapMultiBot() {
 			const botInstance = spawnBot(b);
 			// Stagger each bot: 5s + (index * 10s) to prevent multilogin
 			const staggerDelay = 5000 + (index * 10000);
+			console.log(`[BOOT] ${b.name} scheduled to login in ${staggerDelay/1000}s...`);
 			setTimeout(() => {
 				if (botInstance && typeof botInstance.login === 'function') {
+					console.log(`[BOOT] ${b.name} logging in now...`);
 					botInstance.login(b.token, b.roomId);
+				} else {
+					console.error(`[BOOT ERROR] ${b.name} - no login function found`);
 				}
 			}, staggerDelay);
 			index++;
