@@ -639,6 +639,19 @@ async function spawnBot(botConfig) {
 		console.error(`[ERROR] ${botName}: ${message}`);
 		lastApiError = { message: msg, at: Date.now() };
 
+        // --- FATAL ERROR WATCHDOG ---
+        // "Error while reading" often means the stream is dead. 
+        // We force a reconnect after 10 seconds to ensure the bot returns.
+        if (msg.includes('error while reading') || msg.includes('stream closed')) {
+            console.warn(`[WATCHDOG] Fatal stream error for ${botName}. Forced reconnect in 10s...`);
+            setTimeout(() => {
+                try {
+                    console.log(`[WATCHDOG] Attempting recovery login for ${botName}...`);
+                    bot.login(token, bot.roomId || roomId);
+                } catch(e) { console.error(`[WATCHDOG-ERR]`, e); }
+            }, 10000);
+        }
+
 		// --- SAFETY REVERT TRIGGER ---
 		// If we hit "Room not found" or "Not authorized" and we have a backup room, jump back!
 		if (state.lastGoodRoomId && (msg.includes('room not found') || msg.includes('not authorized'))) {
@@ -1647,12 +1660,22 @@ async function spawnBot(botConfig) {
 		}
 		const before = lastApiError.at;
 		try {
-			if (actionCmd === '!kick') await bot.player.kick(targetId);
-			else if (actionCmd === '!mute') await bot.player.mute(targetId, durationSeconds);
-			else if (actionCmd === '!unmute') await bot.player.unmute(targetId);
-			else if (actionCmd === '!ban') await bot.player.ban(targetId, durationSeconds);
-			else if (actionCmd === '!unban') await bot.player.unban(targetId);
-			else await bot.player.moderateRoom({ user_id: targetId, moderation_action: actionType, action_length: durationSeconds });
+            // SAFE MODERATION WRAPPER
+            // Intercepts SDK stream errors during low-level mod actions
+            const safeMod = async (fn) => {
+                try { await fn(); return true; } 
+                catch (e) { 
+                    console.warn(`[SAFE-MOD] Action intercepted error:`, e.message); 
+                    return false; 
+                }
+            };
+
+			if (actionCmd === '!kick') await safeMod(() => bot.player.kick(targetId));
+			else if (actionCmd === '!mute') await safeMod(() => bot.player.mute(targetId, durationSeconds));
+			else if (actionCmd === '!unmute') await safeMod(() => bot.player.unmute(targetId));
+			else if (actionCmd === '!ban') await safeMod(() => bot.player.ban(targetId, durationSeconds));
+			else if (actionCmd === '!unban') await safeMod(() => bot.player.unban(targetId));
+			else await safeMod(() => bot.player.moderateRoom({ user_id: targetId, moderation_action: actionType, action_length: durationSeconds }));
 
 			await delay(800);
 			if (lastApiError.at > before && lastApiError.message.toLowerCase().includes('not authorized')) {
@@ -1661,7 +1684,7 @@ async function spawnBot(botConfig) {
 			}
 			return targetId;
 		} catch (e) {
-			console.error(`[MOD] Action ${actionCmd} failed:`, e);
+			console.error(`[MOD] Action ${actionCmd} fatally failed:`, e.message);
 			return null;
 		}
 	}
