@@ -124,6 +124,17 @@ const INVITE_MESSAGE = "✨ Our community offers a friendly and positive atmosph
 const app = express();
 const PORT = process.env.PORT || 3000;
 const startTime = Date.now();
+// Unique ID for this specific running instance (Deployment)
+const INSTANCE_ID = `zilla_node_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+console.log(`[SYSTEM] New Instance ID: ${INSTANCE_ID}`);
+
+// --- DATABASE MODELS ---
+const SystemLockSchema = new mongoose.Schema({
+    cluster: { type: String, default: 'main', unique: true },
+    activeInstanceId: String,
+    lastHeartbeat: { type: Date, default: Date.now }
+});
+const SystemLock = mongoose.model('SystemLock', SystemLockSchema);
 
 app.use(express.json());
 
@@ -304,14 +315,15 @@ async function spawnBot(botConfig) {
 	bot.on('ready', async (session) => {
 		console.log(`[READY] ${botName} connected. Session: ${session?.sessionId || 'unknown'}`);
         bootTime = Date.now(); // Reset boot time on successful connection
-		// Cache the bot's user ID and room owner ID
 		try {
 			botUserId = session.user_id;
-			roomOwnerId = session.room_info.owner_id;
-			console.log(`[INFO] ${botName} ID cached: ${botUserId}`);
-			console.log(`[INFO] Room Owner ID: ${roomOwnerId}`);
+            const currentRoom = session.room_info?.room_id || bot.roomId;
+			roomOwnerId = session.room_info?.owner_id;
+			console.log(`[DIAGNOSTIC] ${botName} User ID: ${botUserId}`);
+			console.log(`[DIAGNOSTIC] Joined Room ID: ${currentRoom}`);
+			console.log(`[DIAGNOSTIC] Room Owner ID: ${roomOwnerId}`);
 		} catch (e) {
-			console.warn('Could not cache IDs on ready:', e);
+			console.warn(`[DIAGNOSTIC-ERR] ${botName} failed to parse session:`, e.message);
 		}
 
 		// Safety Checkpoint: This room is verified as working!
@@ -324,13 +336,13 @@ async function spawnBot(botConfig) {
         let attempts = 0;
         while (!confirmed && attempts < 20) {
             try {
-                // We use a separate fetch to avoid triggering the global error listener for transient failures
                 const players = await bot.room.players.fetch().catch(() => null);
                 if (players && players.some(([u]) => u.id === botUserId)) {
                     confirmed = true;
                 } else {
-                    // Only log every 3 attempts to reduce noise
-                    if (attempts % 3 === 0) console.log(`[WAIT] ${botName} syncing with room...`);
+                    // Diagnostic info
+                    const playerCount = players ? players.length : 0;
+                    console.log(`[WAIT] ${botName} still not in room (Seen ${playerCount} players). Attempt ${attempts+1}/20...`);
                     await new Promise(r => setTimeout(r, 2000));
                 }
             } catch (e) {
@@ -2476,6 +2488,20 @@ async function spawnBot(botConfig) {
 
 			send(isDm ? sender.id : null, `✅ Alert dropped into ${delivered} active rooms!`, isDm);
 		},
+		'!danceall': async (sender, args, isDm) => {
+			const uid = sender.actorId || sender.id;
+			if (!OWNER_USER_IDS.includes(uid)) return;
+			const emote = args[1] || 'tiktok8';
+			GLOBAL_BOTS.forEach(b => {
+				try { b.move.emote(emote); } catch (e) { }
+			});
+			send(isDm ? sender.id : null, `💃 All bots are now performing: ${emote}`, isDm);
+		},
+		'!debug': async (sender, args, isDm) => {
+			const uid = sender.actorId || sender.id;
+			if (!OWNER_USER_IDS.includes(uid)) return;
+			send(isDm ? sender.id : null, `🛠️ **BOT DIAGNOSTICS [${botName}]**\n• RoomID: ${bot.roomId}\n• UserID: ${botUserId}\n• Connected: ${bot.connected}\n• Owner: ${roomOwnerId}`, isDm);
+		},
 		'!addbot': (s, a, d) => COMMAND_DISPATCHER['!botadd'](s, a, d),
 		'!botlist': async (sender, args, isDm) => {
 			const uid = sender.actorId || sender.id;
@@ -2497,12 +2523,58 @@ async function spawnBot(botConfig) {
 
 } // End of spawnBot()
 
+async function shutdownAllAndExit(reason) {
+	console.log(`[SHUTDOWN] Initiating graceful exit: ${reason}`);
+	for (const bot of GLOBAL_BOTS) {
+		try {
+			console.log(`[SHUTDOWN] Logging out ${bot.botName}...`);
+			bot.logout();
+		} catch (e) { }
+	}
+	// Give Highrise 5 seconds to clear the server sessions
+	console.log(`[SHUTDOWN] Waiting 5s for clean session drop...`);
+	setTimeout(() => {
+		console.log(`[SHUTDOWN] Exit complete.`);
+		process.exit(0);
+	}, 5000);
+}
+
+// Suicide loop: Check if this node is still the "Active" node
+async function startSuicideCheck() {
+	setInterval(async () => {
+		try {
+			const lock = await SystemLock.findOne({ cluster: 'main' });
+			if (lock && lock.activeInstanceId !== INSTANCE_ID) {
+				console.error(`[LOCK-COLLISION] New deployment detected (${lock.activeInstanceId})! This instance (${INSTANCE_ID}) is now obsolete. Shutting down...`);
+				shutdownAllAndExit("Deployment Overlap Detection");
+			} else {
+                // Keep the lock fresh
+                await SystemLock.updateOne({ cluster: 'main' }, { lastHeartbeat: new Date() });
+            }
+		} catch (e) {
+			console.error(`[LOCK-CHECK-ERR]`, e.message);
+		}
+	}, 20000); // Check every 20s (Render's overlap is usually 30-45s)
+}
+
+process.on('SIGTERM', () => shutdownAllAndExit("SIGTERM (Render Deployment Swap)"));
+process.on('SIGINT', () => shutdownAllAndExit("SIGINT (Manual Stop)"));
+
 async function bootstrapMultiBot() {
 	try {
 		console.log("🚀 Starting Monolithic MongoDB Multi-Bot System...");
 		const uri = process.env.MONGODB_URI || "mongodb+srv://heiszilla_db_user:wXYE76B8jjaVbWOe@cluster0.1oxqb8a.mongodb.net/?appName=Cluster0";
 		await mongoose.connect(uri);
 		console.log("📦 Connected to MongoDB (Cluster0)");
+
+		// --- ACTIVATE DEPLOYMENT LOCK ---
+		console.log(`[LOCK] Claiming master lock for instance: ${INSTANCE_ID}`);
+		await SystemLock.updateOne(
+			{ cluster: 'main' },
+			{ activeInstanceId: INSTANCE_ID, lastHeartbeat: new Date() },
+			{ upsert: true }
+		);
+		startSuicideCheck();
 
 		let bots = await BotConfig.find();
 
