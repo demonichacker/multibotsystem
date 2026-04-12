@@ -300,8 +300,10 @@ async function spawnBot(botConfig) {
 	GLOBAL_BOTS.push(bot);
 
 
+	let bootTime = Date.now();
 	bot.on('ready', async (session) => {
 		console.log(`[READY] ${botName} connected. Session: ${session?.sessionId || 'unknown'}`);
+        bootTime = Date.now(); // Reset boot time on successful connection
 		// Cache the bot's user ID and room owner ID
 		try {
 			botUserId = session.user_id;
@@ -316,17 +318,19 @@ async function spawnBot(botConfig) {
 		state.lastGoodRoomId = bot.roomId;
 		saveState();
 
-		// --- MEMBERSHIP CHECK LOOP ---
+		// --- SILENT MEMBERSHIP CHECK LOOP ---
         // Prevents "Not in room" errors by waiting until the bot is physically present
 		let confirmed = false;
         let attempts = 0;
-        while (!confirmed && attempts < 15) {
+        while (!confirmed && attempts < 20) {
             try {
-                const players = await bot.room.players.fetch();
-                if (players.some(([u]) => u.id === botUserId)) {
+                // We use a separate fetch to avoid triggering the global error listener for transient failures
+                const players = await bot.room.players.fetch().catch(() => null);
+                if (players && players.some(([u]) => u.id === botUserId)) {
                     confirmed = true;
                 } else {
-                    console.log(`[WAIT] ${botName} waiting for room entry... (${attempts + 1}/15)`);
+                    // Only log every 3 attempts to reduce noise
+                    if (attempts % 3 === 0) console.log(`[WAIT] ${botName} syncing with room...`);
                     await new Promise(r => setTimeout(r, 2000));
                 }
             } catch (e) {
@@ -342,7 +346,8 @@ async function spawnBot(botConfig) {
 					await bot.move.walk(roomState.spawnPos.x, roomState.spawnPos.y, roomState.spawnPos.z, roomState.spawnPos.facing || 'FrontRight');
 					console.log(`[INFO] ${botName} successfully walked to default spawnPos`);
 				} catch (e) {
-					console.error(`[ERROR] ${botName} failed to walk to spawnPos:`, e.message);
+					// Only log real failures after membership is confirmed
+					if (confirmed) console.error(`[ERROR] ${botName} failed to walk to spawnPos:`, e.message);
 				}
 			}, 1000);
 		}
@@ -605,16 +610,21 @@ async function spawnBot(botConfig) {
 
 	bot.on('error', (message) => {
 		const msg = String(message || '').toLowerCase();
+		
+		// --- SILENCE TRANSIENT STARTUP ERRORS ---
+		// If the error happens in the first 30s of booting, it's likely noise from the SDK handshake
+		const isStartup = (Date.now() - bootTime < 30000);
+		if (isStartup && (msg.includes('not in room') || msg.includes('not authorized'))) return;
 
 		// --- FIX: Suppress "Target user not in room" logs ---
-		// This error is a common SDK race condition and isn't usually critical.
 		if (msg.includes('target user not in room')) return;
 
 		if (msg.includes('multilogin')) {
-			console.warn('[SESSION] Multilogin detected. Waiting 20 seconds for other session to clear...');
+			console.warn(`[SESSION] ${botName}: Multilogin detected. Clearing session...`);
+			try { bot.logout(); } catch(e){} // Force SDK to drop state
 		}
 
-		console.error(`[ERROR] ${message}`);
+		console.error(`[ERROR] ${botName}: ${message}`);
 		lastApiError = { message: msg, at: Date.now() };
 
 		// --- SAFETY REVERT TRIGGER ---
@@ -2512,8 +2522,9 @@ async function bootstrapMultiBot() {
 		let index = 0;
 		for (const b of bots) {
 			const botInstance = await spawnBot(b);
-			// Stagger each bot: 5s + (index * 10s) to prevent multilogin clashes
-			const staggerDelay = 5000 + (index * 10000);
+			// Stagger Delay: 5s + (index * 20s)
+            // This huge gap is critical for Render + Highrise to clear old sessions properly.
+			const staggerDelay = 5000 + (index * 20000);
 			console.log(`[BOOT] ${b.name} scheduled to login in ${staggerDelay/1000}s...`);
 			setTimeout(() => {
 				if (botInstance && typeof botInstance.login === 'function') {
