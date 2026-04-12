@@ -373,14 +373,20 @@ bot.on('messageCreate', async (userId, conversation) => {
 
 					console.log(`[ROOM-TRANSFER] Database updated for ${botConfig.name}! Fast-swapping...`);
 
-					try { bot.direct.send(conversation.id, "Link Processed! Transferring the bot to the new room now... 🚀 (If I fail, I will automatically return here.)"); } catch (e) { }
+					try { bot.direct.send(conversation.id, "Link Processed! Transferring the bot to the new room now... 🚀"); } catch (e) { }
 
-					setTimeout(() => {
-						console.log(`[ROOM-TRANSFER] Jumping to Room: ${newRoomId}`);
-						botConfig.roomId = newRoomId; // Update local config
-						bot.roomId = newRoomId; // Update target
-						bot.connected = false;   // Reset internal connection state
-						if (bot.ws) bot.ws.close(); // Force the SDK to disconnect and trigger auto-reconnect logic
+					setTimeout(async () => {
+						try {
+                            if (typeof bot.transfer === 'function') {
+                                await bot.transfer(newRoomId);
+                            } else {
+                                // Fallback if refactor isn't fully active yet
+                                bot.roomId = newRoomId;
+                                bot.logout();
+                            }
+                        } catch (e) {
+                            console.error(`[ROOM-TRANSFER-EXEC-ERR]`, e);
+                        }
 					}, 2000);
 					return;
 				}
@@ -669,11 +675,39 @@ async function terminate(reason) {
 process.on('SIGINT', () => { console.log('[SHUTDOWN] SIGINT received. Exiting...'); process.exit(0); });
 process.on('SIGTERM', () => { console.log('[SHUTDOWN] SIGTERM received. Exiting...'); process.exit(0); });
 
-// Start the bot with Cloud Settle Delay
-	console.log(`[BOOT] Settle period active. Waiting 5 seconds...`);
-	await new Promise(resolve => setTimeout(resolve, 5000));
-	console.log(`[BOOT] Settle period complete. Logging in...`);
-	bot.login(token, roomId);
+// --- CONNECTION LIFECYCLE ---
+async function connectToRoom(targetRoomId) {
+    try {
+        console.log(`[CONNECT] ${botName} attempting join: ${targetRoomId}`);
+        bot.roomId = targetRoomId; // Update local state
+        bot.connected = false;
+        
+        // Wait for settle period
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        bot.login(token, targetRoomId);
+    } catch (e) {
+        console.error(`[CONNECT ERROR] ${botName}:`, e.message);
+    }
+}
+
+async function transferToRoom(newRoomId) {
+    console.log(`[TRANSFER] ${botName} moving to: ${newRoomId}`);
+    try {
+        bot.logout();
+        bot.connected = false;
+        botConfig.roomId = newRoomId;
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Let the session clear
+        await connectToRoom(newRoomId);
+    } catch (e) {
+        console.error(`[TRANSFER ERROR] ${botName}:`, e.message);
+    }
+}
+
+bot.transfer = transferToRoom;
+
+// Start the initial connection
+connectToRoom(botConfig.roomId || roomId);
+
 
 // -----------------------
 // Command Router (minimal)
