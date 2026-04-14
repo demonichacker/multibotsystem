@@ -2666,7 +2666,19 @@ async function startRunnerLoop() {
     setInterval(async () => {
         try {
             const assignedBots = await BotConfig.find({ assignedRunnerId: RUNNER_ID });
+            const dbTokens = assignedBots.map(b => b.token);
+
+            // --- CLEANUP STEP: Stop bots that were deleted from DB ---
+            for (let i = GLOBAL_BOTS.length - 1; i >= 0; i--) {
+                const activeBot = GLOBAL_BOTS[i];
+                if (!dbTokens.includes(activeBot.token)) {
+                    console.log(`[CLEANUP] Bot ${activeBot.botName} was deleted from DB. Shutting down...`);
+                    try { activeBot.logout(); } catch(e){}
+                    GLOBAL_BOTS.splice(i, 1);
+                }
+            }
             
+            // --- SYNC STEP: Start or Transfer bots ---
             for (const b of assignedBots) {
                 // 1. IS BOT SPAWNED LOCALLY?
                 let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
