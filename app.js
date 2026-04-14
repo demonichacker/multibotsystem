@@ -2629,7 +2629,16 @@ async function bootstrapMultiBot() {
         if (ROLE === 'MASTER' || ROLE === 'BOTH') {
             if (ROLE === 'BOTH') console.log("[SYSTEM] Running in Hybrid BOTH mode (Master + Runner)");
             console.log("[MASTER] Dashboard and Controller systems online.");
-            // Migration logic here
+            
+            // --- MIGRATION: Auto-assign "homeless" bots to default runner ---
+            const homeless = await BotConfig.updateMany(
+                { assignedRunnerId: { $exists: false } }, 
+                { assignedRunnerId: 'default_runner' }
+            );
+            if (homeless.modifiedCount > 0) {
+                console.log(`[MASTER] Assigned ${homeless.modifiedCount} homeless bots to default_runner.`);
+            }
+
             let bots = await BotConfig.find();
             if (bots.length === 0 && process.env.BOT_TOKEN) {
                 console.log("🤖 First-time boot: Seeding default bot from .env!");
