@@ -43,7 +43,7 @@ const OWNER_USER_IDS = (process.env.BOT_OWNER_IDS || HARDCODED_OWNER_IDS.join(',
 	.map((s) => s.trim())
 	.filter(Boolean);
 
-function getDefaultState() {
+function getDefaultState(initialRoomId = null) {
 	return {
 		protectedUserIds: [],
 		vipUserIds: [],
@@ -52,8 +52,8 @@ function getDefaultState() {
 		globalPrison: {},
 		waitingForInviteUser: null,
 		autoTeleEnabled: false,
-		lastGoodRoomId: bot.roomId,
-		lastSourceConversationId: session.room_info?.owner_id,
+		lastGoodRoomId: initialRoomId,
+		lastSourceConversationId: null,
 		vipPrice: 500,
 		vipDurationDays: 30,
 		walletTotal: 0,
@@ -290,7 +290,7 @@ async function spawnBot(botConfig) {
 	const { name: botName, token, roomId } = botConfig;
 
 	// Setup Isolated Per-Bot State Memory
-	const state = { ...getDefaultState(), ...(botConfig.state || {}) };
+	const state = { ...getDefaultState(roomId), ...(botConfig.state || {}) };
 
 	let saveTimeout = null;
 	function saveState() {
