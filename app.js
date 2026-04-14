@@ -662,8 +662,10 @@ async function spawnBot(botConfig) {
         // "Error while reading" often means the stream is dead. 
         // We force a reconnect after 10 seconds to ensure the bot returns.
         if (msg.includes('error while reading') || msg.includes('stream closed')) {
+            if (bot.isTerminated) return; // Don't restart if we intentionally shut it down!
             console.warn(`[WATCHDOG] Fatal stream error for ${botName}. Forced reconnect in 10s...`);
             setTimeout(() => {
+                if (bot.isTerminated) return; 
                 try {
                     console.log(`[WATCHDOG] Attempting recovery login for ${botName}...`);
                     bot.login(token, bot.roomId || roomId);
@@ -2673,6 +2675,7 @@ async function startRunnerLoop() {
                 const activeBot = GLOBAL_BOTS[i];
                 if (!dbTokens.includes(activeBot.token)) {
                     console.log(`[CLEANUP] Bot ${activeBot.botName} was deleted from DB. Shutting down...`);
+                    activeBot.isTerminated = true; // Mark as permanently dead
                     try { activeBot.logout(); } catch(e){}
                     GLOBAL_BOTS.splice(i, 1);
                 }
