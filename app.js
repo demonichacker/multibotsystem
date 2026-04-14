@@ -280,7 +280,7 @@ app.post('/webhook', (req, res) => {
 	res.status(200).send({ status: 'success', message: 'Webhook signal received' });
 });
 
-if (ROLE === 'MASTER') {
+if (ROLE === 'MASTER' || ROLE === 'BOTH') {
     app.listen(PORT, () => console.log(`[SERVER] Dashboard live on port ${PORT}`));
 }
 
@@ -2587,17 +2587,18 @@ async function shutdownAllAndExit(reason) {
 	}, 5000);
 }
 
-// Suicide loop: Check if this node is still the "Active" node
+// Suicide loop: Check if this node is still the "Active" node for its specific task
 async function startSuicideCheck() {
+    const lockKey = ROLE === 'MASTER' ? 'master_lock' : `runner_lock_${RUNNER_ID}`;
 	setInterval(async () => {
 		try {
-			const lock = await SystemLock.findOne({ cluster: 'main' });
+			const lock = await SystemLock.findOne({ cluster: lockKey });
 			if (lock && lock.activeInstanceId !== INSTANCE_ID) {
 				console.error(`[LOCK-COLLISION] New deployment detected (${lock.activeInstanceId})! This instance (${INSTANCE_ID}) is now obsolete. Shutting down...`);
 				shutdownAllAndExit("Deployment Overlap Detection");
 			} else {
-                // Keep the lock fresh
-                await SystemLock.updateOne({ cluster: 'main' }, { lastHeartbeat: new Date() });
+                // Keep-alive
+                await SystemLock.updateOne({ cluster: lockKey }, { lastHeartbeat: new Date() });
             }
 		} catch (e) {
 			console.error(`[LOCK-CHECK-ERR]`, e.message);
@@ -2615,16 +2616,18 @@ async function bootstrapMultiBot() {
 		console.log("📦 Connected to MongoDB (Cluster0)");
 
 		// --- ACTIVATE DEPLOYMENT LOCK ---
-		console.log(`[LOCK] Claiming master lock for instance: ${INSTANCE_ID}`);
+        const lockKey = ROLE === 'MASTER' ? 'master_lock' : `runner_lock_${RUNNER_ID}`;
+		console.log(`[LOCK] Claiming ${lockKey} for instance: ${INSTANCE_ID}`);
 		await SystemLock.updateOne(
-			{ cluster: 'main' },
+			{ cluster: lockKey },
 			{ activeInstanceId: INSTANCE_ID, lastHeartbeat: new Date() },
 			{ upsert: true }
 		);
 		startSuicideCheck();
 
 		// --- ROLE BRANCHING ---
-        if (ROLE === 'MASTER') {
+        if (ROLE === 'MASTER' || ROLE === 'BOTH') {
+            if (ROLE === 'BOTH') console.log("[SYSTEM] Running in Hybrid BOTH mode (Master + Runner)");
             console.log("[MASTER] Dashboard and Controller systems online.");
             // Migration logic here
             let bots = await BotConfig.find();
@@ -2639,7 +2642,9 @@ async function bootstrapMultiBot() {
                 });
                 await newBot.save();
             }
-        } else if (ROLE === 'RUNNER') {
+        } 
+        
+        if (ROLE === 'RUNNER' || ROLE === 'BOTH') {
             console.log(`[RUNNER] Bot Engine operational. Watching for assigned bots for: ${RUNNER_ID}...`);
             await startRunnerLoop();
         }
@@ -2695,7 +2700,7 @@ async function startRunnerLoop() {
                 }
             }
         } catch (e) { console.error("[RUNNER-LOOP-ERR]", e); }
-    }, 30000); // Check every 30s
+    }, 15000); // Check every 15s for snappy starts
 }
 
 bootstrapMultiBot();
