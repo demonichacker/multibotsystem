@@ -1886,8 +1886,8 @@ async function spawnBot(botConfig) {
 			await performBotEmote(EMOTE_MAP[name] || name);
 		},
 		'!emotes': async (sender, args, isDm) => {
-			for (let i = 0; i < EMOTE_KEYS.length; i += 15) {
-				const chunk = EMOTE_KEYS.slice(i, i + 15).map((name, idx) => `${i + idx + 1}. ${name}`);
+			for (let i = 0; i < EMOTE_KEYS.length; i += 10) {
+				const chunk = EMOTE_KEYS.slice(i, i + 10).map((name, idx) => `${i + idx + 1}. ${name}`);
 				// Force type to true (whisper) if it's not already in an inbox DM
 				await send(sender.id, `Emotes: ${chunk.join(', ')}`, isDm || true);
 				await delay(500);
