@@ -4,12 +4,24 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
-const BotConfigSchema = new mongoose.Schema({ name: String, token: { type: String, unique: true }, roomId: String, addedBy: String, ownerConversationId: String, state: { type: mongoose.Schema.Types.Mixed, default: {} } });
+const BotConfigSchema = new mongoose.Schema({ 
+    name: String, 
+    token: { type: String, unique: true }, 
+    roomId: String, // The room the bot is ACTUALLY in currently
+    targetRoomId: String, // The room we WANT the bot to go to
+    assignedRunnerId: { type: String, default: 'default_runner' }, // Which server owns this bot
+    isOnline: { type: Boolean, default: false },
+    addedBy: String, 
+    ownerConversationId: String, 
+    state: { type: mongoose.Schema.Types.Mixed, default: {} } 
+});
 mongoose.models = {}; const BotConfig = mongoose.model('BotConfig', BotConfigSchema);
-// GlobalState is deprecated, we keep model just in case we need to migrate
-const GlobalStateSchema = new mongoose.Schema({ data: mongoose.Schema.Types.Mixed });
-const GlobalState = mongoose.model('GlobalState', GlobalStateSchema);
 const GLOBAL_BOTS = [];
+
+// --- ORCHESTRATION CONSTANTS ---
+const ROLE = process.env.ROLE || 'MASTER'; // MASTER (Dashboard) or RUNNER (Bots)
+const RUNNER_ID = process.env.RUNNER_ID || 'default_runner';
+console.log(`[SYSTEM] Starting in ROLE: ${ROLE} (ID: ${RUNNER_ID})`);
 
 // Bot Configuration
 const settings = {
@@ -40,8 +52,8 @@ function getDefaultState() {
 		globalPrison: {},
 		waitingForInviteUser: null,
 		autoTeleEnabled: false,
-		lastGoodRoomId: null,
-		lastSourceConversationId: null,
+		lastGoodRoomId: bot.roomId,
+		lastSourceConversationId: session.room_info?.owner_id,
 		vipPrice: 500,
 		vipDurationDays: 30,
 		walletTotal: 0,
@@ -268,7 +280,9 @@ app.post('/webhook', (req, res) => {
 	res.status(200).send({ status: 'success', message: 'Webhook signal received' });
 });
 
-app.listen(PORT, () => console.log(`[SERVER] Dashboard live on port ${PORT}`));
+if (ROLE === 'MASTER') {
+    app.listen(PORT, () => console.log(`[SERVER] Dashboard live on port ${PORT}`));
+}
 
 // Minimal event hooks for visibility
 
@@ -329,6 +343,9 @@ async function spawnBot(botConfig) {
 		// Safety Checkpoint: This room is verified as working!
 		state.lastGoodRoomId = bot.roomId;
 		saveState();
+
+        // --- ORCHESTRATOR STATUS UPDATE ---
+        await BotConfig.updateOne({ token: bot.token }, { isOnline: true });
 
 		// --- SILENT MEMBERSHIP CHECK LOOP ---
         // Prevents "Not in room" errors by waiting until the bot is physically present
@@ -402,25 +419,11 @@ async function spawnBot(botConfig) {
 						state.waitingForInviteUser = null; // Un-arm
 						saveState();
 
-						const envPath = path.join(__dirname, '.env');
 						// Save the new room target to the database for this specific bot
-						BotConfig.updateOne({ token: botConfig.token }, { roomId: newRoomId }).catch(console.error);
+						await BotConfig.updateOne({ token: botConfig.token }, { targetRoomId: newRoomId }).catch(console.error);
+                        
+						try { bot.direct.send(conversation.id, "✅ Destination Recorded! The system will now perform a Safe Transfer (15s cooldown) to ensure no session errors. 🚀"); } catch (e) { }
 
-						try { bot.direct.send(conversation.id, "Link Processed! Transferring the bot to the new room now... 🚀"); } catch (e) { }
-
-						setTimeout(async () => {
-							try {
-                                if (typeof bot.transfer === 'function') {
-                                    await bot.transfer(newRoomId);
-                                } else {
-                                    // Fallback
-                                    bot.roomId = newRoomId;
-                                    bot.logout();
-                                }
-                            } catch (e) {
-                                console.error(`[ROOM-TRANSFER-EXEC-ERR]`, e);
-                            }
-						}, 2000);
 						return;
 					}
 				}
@@ -491,10 +494,21 @@ async function spawnBot(botConfig) {
 				}
 				const customerId = profile.user.user_id;
 
-				await new BotConfig({ name: session.name, token: session.token, roomId: session.roomId, addedBy: customerId }).save();
-				spawnBot({ name: session.name, token: session.token, roomId: session.roomId });
+				await new BotConfig({ 
+                    name: session.name, 
+                    token: session.token, 
+                    roomId: session.roomId, 
+                    targetRoomId: session.roomId,
+                    addedBy: customerId,
+                    assignedRunnerId: 'default_runner' 
+                }).save();
+				
+                // Only spawn if we are a RUNNER and this is our job
+                if (ROLE === 'RUNNER' && RUNNER_ID === 'default_runner') {
+                    spawnBot({ name: session.name, token: session.token, roomId: session.roomId });
+                }
 
-				send(isDm ? senderObj.id : null, `🎉 **SUCCESS!** 🎉\nBot **${session.name}** spun up down in ${session.roomId}!\n**@${session.customer}** gets Permanent Ownership.`, isDm);
+				send(isDm ? senderObj.id : null, `🎉 **SUCCESS!** 🎉\nBot **${session.name}** database entry created for room ${session.roomId}!\n**@${session.customer}** gets Permanent Ownership.`, isDm);
 				delete activeBotSetups[userId];
 			} catch (e) {
 				delete activeBotSetups[userId];
@@ -620,7 +634,7 @@ async function spawnBot(botConfig) {
 		if (user?.id) stopEmoteForUser(user.id);
 	});
 
-	bot.on('error', (message) => {
+	bot.on('error', async (message) => {
 		const msg = String(message || '').toLowerCase();
 		
 		// --- SILENCE TRANSIENT STARTUP ERRORS ---
@@ -638,6 +652,11 @@ async function spawnBot(botConfig) {
 
 		console.error(`[ERROR] ${botName}: ${message}`);
 		lastApiError = { message: msg, at: Date.now() };
+
+        // Auto-offline status
+        if (msg.includes('not in room') || msg.includes('not authorized')) {
+             await BotConfig.updateOne({ token: bot.token }, { isOnline: false });
+        }
 
         // --- FATAL ERROR WATCHDOG ---
         // "Error while reading" often means the stream is dead. 
@@ -2591,8 +2610,7 @@ process.on('SIGINT', () => shutdownAllAndExit("SIGINT (Manual Stop)"));
 
 async function bootstrapMultiBot() {
 	try {
-		console.log("🚀 Starting Monolithic MongoDB Multi-Bot System...");
-		const uri = process.env.MONGODB_URI || "mongodb+srv://heiszilla_db_user:wXYE76B8jjaVbWOe@cluster0.1oxqb8a.mongodb.net/?appName=Cluster0";
+        const uri = process.env.MONGODB_URI || "mongodb+srv://heiszilla_db_user:wXYE76B8jjaVbWOe@cluster0.1oxqb8a.mongodb.net/?appName=Cluster0";
 		await mongoose.connect(uri);
 		console.log("📦 Connected to MongoDB (Cluster0)");
 
@@ -2605,41 +2623,79 @@ async function bootstrapMultiBot() {
 		);
 		startSuicideCheck();
 
-		let bots = await BotConfig.find();
+		// --- ROLE BRANCHING ---
+        if (ROLE === 'MASTER') {
+            console.log("[MASTER] Dashboard and Controller systems online.");
+            // Migration logic here
+            let bots = await BotConfig.find();
+            if (bots.length === 0 && process.env.BOT_TOKEN) {
+                console.log("🤖 First-time boot: Seeding default bot from .env!");
+                const newBot = new BotConfig({ 
+                    name: "Zilla Master", 
+                    token: process.env.BOT_TOKEN, 
+                    roomId: process.env.ROOM_ID, 
+                    targetRoomId: process.env.ROOM_ID,
+                    assignedRunnerId: 'default_runner' 
+                });
+                await newBot.save();
+            }
+        } else if (ROLE === 'RUNNER') {
+            console.log(`[RUNNER] Bot Engine operational. Watching for assigned bots for: ${RUNNER_ID}...`);
+            await startRunnerLoop();
+        }
 
-		// Master Migration Hook
-		if (bots.length === 0 && process.env.BOT_TOKEN) {
-			console.log("🤖 First-time boot: Seeding default bot from .env!");
-			// Read classic master state explicitly to migrate into first BotConfig
-			let migratedState = getDefaultState();
-			const dbState = await GlobalState.findOne({});
-			if (dbState && dbState.data) {
-				Object.assign(migratedState, dbState.data);
-				console.log("📥 Migrated classic GlobalState into Master BotConfig!");
-			}
-			const newBot = new BotConfig({ name: "Zilla Master", token: process.env.BOT_TOKEN, roomId: process.env.ROOM_ID, state: migratedState });
-			await newBot.save(); bots.push(newBot);
-		}
-
-		console.log(`🤖 Booting ${bots.length} persistent bots...`);
-		let index = 0;
-		for (const b of bots) {
-			const botInstance = await spawnBot(b);
-			// Stagger Delay: 5s + (index * 20s)
-            // This huge gap is critical for Render + Highrise to clear old sessions properly.
-			const staggerDelay = 5000 + (index * 20000);
-			console.log(`[BOOT] ${b.name} scheduled to login in ${staggerDelay/1000}s...`);
-			setTimeout(() => {
-				if (botInstance && typeof botInstance.login === 'function') {
-					console.log(`[BOOT] ${b.name} logging in now...`);
-					botInstance.login(b.token, b.roomId);
-				} else {
-					console.error(`[BOOT ERROR] ${b.name} - no login function found (Check spawnBot return value)`);
-				}
-			}, staggerDelay);
-			index++;
-		}
 	} catch (e) { console.error("❌ MongoDB Boot Failed:", e.message); }
+}
+
+async function startRunnerLoop() {
+    // This loop checks for bots assigned to this specific runner
+    setInterval(async () => {
+        try {
+            const assignedBots = await BotConfig.find({ assignedRunnerId: RUNNER_ID });
+            
+            for (const b of assignedBots) {
+                // 1. IS BOT SPAWNED LOCALLY?
+                let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
+                
+                if (!activeBot) {
+                    console.log(`[RUNNER] Found new bot job: ${b.name}. Spawning...`);
+                    const botInstance = await spawnBot(b);
+                    // Add some metadata to the instance for tracking
+                    botInstance.token = b.token;
+                    botInstance.botName = b.name;
+                    GLOBAL_BOTS.push(botInstance);
+                    
+                    // Staggered login
+                    setTimeout(() => {
+                        console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
+                        botInstance.login(b.token, b.roomId);
+                    }, 5000);
+                    continue;
+                }
+
+                // 2. DETECT ROOM TRANSFER REQUEST
+                if (b.targetRoomId && b.targetRoomId !== b.roomId) {
+                    console.log(`[TRANSFER] ${b.name} room change detected: ${b.roomId} -> ${b.targetRoomId}`);
+                    
+                    // SAFE TRANSFER CYCLE (Kills Multilogin ghost sessions)
+                    try {
+                        activeBot.logout();
+                        console.log(`[TRANSFER] ${b.name} logged out. Waiting 15s for session cleanup...`);
+                        
+                        // Update current room ID in DB to "BOOTING" to prevent repeat loops
+                        await BotConfig.updateOne({ token: b.token }, { roomId: 'TRANSFERRING' });
+
+                        setTimeout(async () => {
+                            console.log(`[TRANSFER] Re-logging ${b.name} into target room: ${b.targetRoomId}`);
+                            activeBot.login(b.token, b.targetRoomId);
+                            // Update DB after successful login attempt
+                            await BotConfig.updateOne({ token: b.token }, { roomId: b.targetRoomId });
+                        }, 15000);
+                    } catch (e) { console.error(`[TRANSFER-ERR]`, e); }
+                }
+            }
+        } catch (e) { console.error("[RUNNER-LOOP-ERR]", e); }
+    }, 30000); // Check every 30s
 }
 
 bootstrapMultiBot();
