@@ -13,6 +13,7 @@ const BotConfigSchema = new mongoose.Schema({
     isOnline: { type: Boolean, default: false },
     addedBy: String, 
     ownerConversationId: String, 
+    expiresAt: { type: Date, default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) }, // Default 30 days
     state: { type: mongoose.Schema.Types.Mixed, default: {} } 
 });
 mongoose.models = {}; const BotConfig = mongoose.model('BotConfig', BotConfigSchema);
@@ -500,7 +501,8 @@ async function spawnBot(botConfig) {
                     roomId: session.roomId, 
                     targetRoomId: session.roomId,
                     addedBy: customerId,
-                    assignedRunnerId: 'default_runner' 
+                    assignedRunnerId: 'default_runner',
+                    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 day trial
                 }).save();
 				
                 // Only spawn if we are a RUNNER and this is our job
@@ -2387,6 +2389,27 @@ async function spawnBot(botConfig) {
 			const ok = await withTarget(sender, args, '!void', 'void', isDm);
 			if (ok) send(isDm ? sender.id : null, `Voided ${args[1]}.`, isDm);
 		},
+		'!addtime': async (sender, args, isDm) => {
+			if (!(await isOwnerOnly(sender))) return send(isDm ? sender.id : null, 'Owner only.', isDm);
+			const days = parseInt(args[1]);
+            const botName = args.slice(2).join(' ');
+			if (isNaN(days) || !botName) return send(isDm ? sender.id : null, 'Usage: !addtime <days> <target_bot_name>', isDm);
+
+			const botDoc = await BotConfig.findOne({ name: new RegExp(`^${botName}$`, 'i') });
+			if (!botDoc) return send(isDm ? sender.id : null, `Bot "${botName}" not found.`, isDm);
+
+            const currentExpiry = botDoc.expiresAt || new Date();
+            const newExpiry = new Date(currentExpiry.getTime() + days * 24 * 60 * 60 * 1000);
+            
+			await BotConfig.updateOne({ _id: botDoc._id }, { expiresAt: newExpiry });
+			send(isDm ? sender.id : null, `✅ Added ${days} days to **${botDoc.name}**.\nNew Expiry: ${newExpiry.toLocaleDateString()}`, isDm);
+		},
+        '!botinfo': async (sender, args, isDm) => {
+            const botDoc = await BotConfig.findOne({ token: botConfig.token });
+            if (!botDoc) return;
+            const daysLeft = Math.ceil((botDoc.expiresAt - new Date()) / (1000 * 60 * 60 * 24));
+            send(isDm ? sender.id : null, `🤖 **Bot Info**\nName: ${botDoc.name}\nRunner: ${botDoc.assignedRunnerId}\nStatus: ${botDoc.isOnline ? 'Online' : 'Offline'}\nSubscription: ${daysLeft > 0 ? daysLeft + ' days left' : 'EXPIRED!'}`, isDm);
+        },
 		'!punch': async (sender, args, isDm) => {
 			const targetId = await resolveUserIdByMention(args[1]);
 			if (!targetId) return send(isDm ? sender.id : null, 'User not found.', isDm);
@@ -2464,9 +2487,10 @@ async function spawnBot(botConfig) {
 			roomState.spawnPos = { x: pos.x, y: pos.y, z: pos.z, facing: pos.facing || 'FrontRight' };
 			saveState();
 
-			// Walk to new spawn immediately
-			bot.move.walk(pos.x, pos.y, pos.z, pos.facing || 'FrontRight');
-
+			// Walk to new spawn immediately with validation
+            if (typeof pos.x === 'number' && typeof pos.y === 'number' && typeof pos.z === 'number') {
+    			bot.move.walk(pos.x, pos.y, pos.z, pos.facing || 'FrontRight');
+            }
 			send(isDm ? sender.id : null, 'Spawn set. Moving there now!', isDm);
 		},
 		'!setvipspawn': async (sender, args, isDm) => {
@@ -2641,6 +2665,15 @@ async function bootstrapMultiBot() {
                 console.log(`[MASTER] Assigned ${homeless.modifiedCount} homeless bots to default_runner.`);
             }
 
+            // --- MIGRATION: Ensure all bots have an expiry date ---
+            const undated = await BotConfig.updateMany(
+                { expiresAt: { $exists: false } },
+                { expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) }
+            );
+            if (undated.modifiedCount > 0) {
+                console.log(`[MASTER] Set 30-day expiry for ${undated.modifiedCount} legacy bots.`);
+            }
+
             let bots = await BotConfig.find();
             if (bots.length === 0 && process.env.BOT_TOKEN) {
                 console.log("🤖 First-time boot: Seeding default bot from .env!");
@@ -2670,35 +2703,64 @@ async function startRunnerLoop() {
             const assignedBots = await BotConfig.find({ assignedRunnerId: RUNNER_ID });
             const dbTokens = assignedBots.map(b => b.token);
 
-            // --- CLEANUP STEP: Stop bots that were deleted from DB ---
+            // --- CLEANUP STEP: Stop bots that were deleted or EXPIRED ---
             for (let i = GLOBAL_BOTS.length - 1; i >= 0; i--) {
                 const activeBot = GLOBAL_BOTS[i];
-                if (!dbTokens.includes(activeBot.token)) {
-                    console.log(`[CLEANUP] Bot ${activeBot.botName} was deleted from DB. Shutting down...`);
-                    activeBot.isTerminated = true; // Mark as permanently dead
-                    try { activeBot.logout(); } catch(e){}
+                const dbBot = assignedBots.find(b => b.token === activeBot.token);
+                
+                const isDeleted = !dbTokens.includes(activeBot.token);
+                const isExpired = dbBot && dbBot.expiresAt && new Date() > dbBot.expiresAt;
+
+                if (isDeleted || isExpired) {
+                    const reason = isDeleted ? 'Deleted from DB' : 'Subscription Expired';
+                    console.log(`[CLEANUP] Bot ${activeBot.botName} shut down. Reason: ${reason}`);
+                    activeBot.isTerminated = true; 
+                    if (activeBot.logout) {
+                        try { activeBot.logout(); } catch(e){}
+                    }
                     GLOBAL_BOTS.splice(i, 1);
                 }
             }
             
             // --- SYNC STEP: Start or Transfer bots ---
             for (const b of assignedBots) {
+                // Skip if expired
+                if (b.expiresAt && new Date() > b.expiresAt) continue;
                 // 1. IS BOT SPAWNED LOCALLY?
                 let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
                 
+                // If the bot is still spawning, skip it until the next poll
+                if (activeBot && activeBot.isSpawning) continue;
+
                 if (!activeBot) {
                     console.log(`[RUNNER] Found new bot job: ${b.name}. Spawning...`);
-                    const botInstance = await spawnBot(b);
-                    // Add some metadata to the instance for tracking
-                    botInstance.token = b.token;
-                    botInstance.botName = b.name;
-                    GLOBAL_BOTS.push(botInstance);
                     
-                    // Staggered login
-                    setTimeout(() => {
-                        console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
-                        botInstance.login(b.token, b.roomId);
-                    }, 5000);
+                    // --- RACE CONDITION PREVENTER ---
+                    // Immediately push a 'placeholder' so another interval doesn't try to spawn it
+                    GLOBAL_BOTS.push({ token: b.token, botName: b.name, isSpawning: true });
+                    
+                    try {
+                        const botInstance = await spawnBot(b);
+                        // Find the placeholder and replace it with the real instance
+                        const pIdx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token && gb.isSpawning);
+                        if (pIdx !== -1) {
+                            botInstance.token = b.token;
+                            botInstance.botName = b.name;
+                            GLOBAL_BOTS[pIdx] = botInstance;
+                            
+                            // Staggered login
+                            setTimeout(() => {
+                                if (botInstance.isTerminated) return;
+                                console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
+                                botInstance.login(b.token, b.roomId);
+                            }, 5000);
+                        }
+                    } catch (e) {
+                        console.error(`[SPAWN-ERR] ${b.name}:`, e);
+                        // Remove placeholder on failure so we can try again
+                        const pIdx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token && gb.isSpawning);
+                        if (pIdx !== -1) GLOBAL_BOTS.splice(pIdx, 1);
+                    }
                     continue;
                 }
 
