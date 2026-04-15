@@ -324,7 +324,7 @@ async function spawnBot(botConfig) {
 	);
 	bot.botName = botName;
 	bot.botConfig = botConfig;
-	GLOBAL_BOTS.push(bot);
+    // Removed redundant GLOBAL_BOTS.push(bot) - Handled by the Runner now
 
 
 	let bootTime = Date.now();
@@ -2784,7 +2784,12 @@ async function startRunnerLoop() {
                     
                     // SAFE TRANSFER CYCLE (Kills Multilogin ghost sessions)
                     try {
-                        activeBot.logout();
+                        if (activeBot && typeof activeBot.logout === 'function') {
+                            activeBot.logout();
+                        } else {
+                            console.warn(`[TRANSFER-WARN] ${b.name} skip: Bot instance not fully ready for logout.`);
+                            continue;
+                        }
                         console.log(`[TRANSFER] ${b.name} logged out. Waiting 15s for session cleanup...`);
                         
                         // Update current room ID in DB to "BOOTING" to prevent repeat loops
