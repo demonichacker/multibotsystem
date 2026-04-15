@@ -2739,10 +2739,11 @@ async function startRunnerLoop() {
             for (const b of assignedBots) {
                 // Skip if expired (unless permanent)
                 if (!b.isPermanent && b.expiresAt && new Date() > b.expiresAt) continue;
+
                 // 1. IS BOT SPAWNED LOCALLY?
                 let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
                 
-                // If the bot is still spawning, skip it until the next poll
+                // Safety: Skip placeholders while spawning to avoid TypeErrors
                 if (activeBot && activeBot.isSpawning) continue;
 
                 if (!activeBot) {
