@@ -14,6 +14,7 @@ const BotConfigSchema = new mongoose.Schema({
     addedBy: String, 
     ownerConversationId: String, 
     expiresAt: { type: Date, default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) }, // Default 30 days
+    isPermanent: { type: Boolean, default: false },
     state: { type: mongoose.Schema.Types.Mixed, default: {} } 
 });
 mongoose.models = {}; const BotConfig = mongoose.model('BotConfig', BotConfigSchema);
@@ -2401,14 +2402,26 @@ async function spawnBot(botConfig) {
             const currentExpiry = botDoc.expiresAt || new Date();
             const newExpiry = new Date(currentExpiry.getTime() + days * 24 * 60 * 60 * 1000);
             
-			await BotConfig.updateOne({ _id: botDoc._id }, { expiresAt: newExpiry });
+			await BotConfig.updateOne({ _id: botDoc._id }, { expiresAt: newExpiry, isPermanent: false });
 			send(isDm ? sender.id : null, `✅ Added ${days} days to **${botDoc.name}**.\nNew Expiry: ${newExpiry.toLocaleDateString()}`, isDm);
+		},
+		'!setpermanent': async (sender, args, isDm) => {
+			if (!(await isOwnerOnly(sender))) return send(isDm ? sender.id : null, 'Owner only.', isDm);
+            const botName = args.slice(1).join(' ');
+			if (!botName) return send(isDm ? sender.id : null, 'Usage: !setpermanent <bot_name>', isDm);
+
+			const botDoc = await BotConfig.findOne({ name: new RegExp(`^${botName}$`, 'i') });
+			if (!botDoc) return send(isDm ? sender.id : null, `Bot "${botName}" not found.`, isDm);
+
+			await BotConfig.updateOne({ _id: botDoc._id }, { isPermanent: true });
+			send(isDm ? sender.id : null, `💎 **${botDoc.name}** is now PERMANENT! It will never expire.`, isDm);
 		},
         '!botinfo': async (sender, args, isDm) => {
             const botDoc = await BotConfig.findOne({ token: botConfig.token });
             if (!botDoc) return;
             const daysLeft = Math.ceil((botDoc.expiresAt - new Date()) / (1000 * 60 * 60 * 24));
-            send(isDm ? sender.id : null, `🤖 **Bot Info**\nName: ${botDoc.name}\nRunner: ${botDoc.assignedRunnerId}\nStatus: ${botDoc.isOnline ? 'Online' : 'Offline'}\nSubscription: ${daysLeft > 0 ? daysLeft + ' days left' : 'EXPIRED!'}`, isDm);
+            const subStatus = botDoc.isPermanent ? 'PERMANENT 🎖️' : (daysLeft > 0 ? daysLeft + ' days left' : 'EXPIRED!');
+            send(isDm ? sender.id : null, `🤖 **Bot Info**\nName: ${botDoc.name}\nRunner: ${botDoc.assignedRunnerId}\nStatus: ${botDoc.isOnline ? 'Online' : 'Offline'}\nSubscription: ${subStatus}`, isDm);
         },
 		'!punch': async (sender, args, isDm) => {
 			const targetId = await resolveUserIdByMention(args[1]);
@@ -2709,7 +2722,7 @@ async function startRunnerLoop() {
                 const dbBot = assignedBots.find(b => b.token === activeBot.token);
                 
                 const isDeleted = !dbTokens.includes(activeBot.token);
-                const isExpired = dbBot && dbBot.expiresAt && new Date() > dbBot.expiresAt;
+                const isExpired = dbBot && !dbBot.isPermanent && dbBot.expiresAt && new Date() > dbBot.expiresAt;
 
                 if (isDeleted || isExpired) {
                     const reason = isDeleted ? 'Deleted from DB' : 'Subscription Expired';
@@ -2724,8 +2737,8 @@ async function startRunnerLoop() {
             
             // --- SYNC STEP: Start or Transfer bots ---
             for (const b of assignedBots) {
-                // Skip if expired
-                if (b.expiresAt && new Date() > b.expiresAt) continue;
+                // Skip if expired (unless permanent)
+                if (!b.isPermanent && b.expiresAt && new Date() > b.expiresAt) continue;
                 // 1. IS BOT SPAWNED LOCALLY?
                 let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
                 
