@@ -2743,14 +2743,11 @@ async function startRunnerLoop() {
                 // 1. IS BOT SPAWNED LOCALLY?
                 let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
                 
-                // Safety: Skip placeholders while spawning to avoid TypeErrors
-                if (activeBot && activeBot.isSpawning) continue;
-
                 if (!activeBot) {
                     console.log(`[RUNNER] Found new bot job: ${b.name}. Spawning...`);
                     
                     // --- RACE CONDITION PREVENTER ---
-                    // Immediately push a 'placeholder' so another interval doesn't try to spawn it
+                    // Immediately push a placeholder so we don't start it twice
                     GLOBAL_BOTS.push({ token: b.token, botName: b.name, isSpawning: true });
                     
                     try {
@@ -2771,12 +2768,15 @@ async function startRunnerLoop() {
                         }
                     } catch (e) {
                         console.error(`[SPAWN-ERR] ${b.name}:`, e);
-                        // Remove placeholder on failure so we can try again
+                        // Cleanup placeholder on failure
                         const pIdx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token && gb.isSpawning);
                         if (pIdx !== -1) GLOBAL_BOTS.splice(pIdx, 1);
                     }
                     continue;
                 }
+
+                // Safety: Skip if still in spawning/placeholder phase
+                if (activeBot.isSpawning) continue;
 
                 // 2. DETECT ROOM TRANSFER REQUEST
                 if (b.targetRoomId && b.targetRoomId !== b.roomId) {
@@ -2784,10 +2784,10 @@ async function startRunnerLoop() {
                     
                     // SAFE TRANSFER CYCLE (Kills Multilogin ghost sessions)
                     try {
-                        if (activeBot && typeof activeBot.logout === 'function') {
+                        if (activeBot && activeBot.logout) {
                             activeBot.logout();
                         } else {
-                            console.warn(`[TRANSFER-WARN] ${b.name} skip: Bot instance not fully ready for logout.`);
+                            console.warn(`[TRANSFER-WARN] ${b.name} skip: Bot instance not fully ready.`);
                             continue;
                         }
                         console.log(`[TRANSFER] ${b.name} logged out. Waiting 15s for session cleanup...`);
