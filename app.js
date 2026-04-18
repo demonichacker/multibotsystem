@@ -324,13 +324,18 @@ async function spawnBot(botConfig) {
 	);
 	bot.botName = botName;
 	bot.botConfig = botConfig;
-    // Removed redundant GLOBAL_BOTS.push(bot) - Handled by the Runner now
+    bot.token = token;
+    bot.isSpawning = true;
+    bot.isReadyForTransfer = false;
+
+    // Register immediately to prevent race conditions
+    GLOBAL_BOTS.push(bot);
 
 
 	let bootTime = Date.now();
 	bot.on('ready', async (session) => {
 		console.log(`[READY] ${botName} connected. Session: ${session?.sessionId || 'unknown'}`);
-        bootTime = Date.now(); // Reset boot time on successful connection
+        bootTime = Date.now(); 
 		try {
 			botUserId = session.user_id;
             const currentRoom = session.room_info?.room_id || bot.roomId;
@@ -338,6 +343,11 @@ async function spawnBot(botConfig) {
 			console.log(`[DIAGNOSTIC] ${botName} User ID: ${botUserId}`);
 			console.log(`[DIAGNOSTIC] Joined Room ID: ${currentRoom}`);
 			console.log(`[DIAGNOSTIC] Room Owner ID: ${roomOwnerId}`);
+            
+            // Mark as operational
+            bot.isSpawning = false;
+            bot.isReadyForTransfer = true; 
+            console.log(`[RUNNER] ${botName} is now fully operational and ready for transfers.`);
 		} catch (e) {
 			console.warn(`[DIAGNOSTIC-ERR] ${botName} failed to parse session:`, e.message);
 		}
@@ -2746,45 +2756,26 @@ async function startRunnerLoop() {
                 if (!activeBot) {
                     console.log(`[RUNNER] Found new bot job: ${b.name}. Spawning...`);
                     
-                    // --- RACE CONDITION PREVENTER ---
-                    // Immediately push a placeholder so we don't start it twice
-                    GLOBAL_BOTS.push({ token: b.token, botName: b.name, isSpawning: true });
-                    
                     try {
                         const botInstance = await spawnBot(b);
-                        // Find the placeholder and replace it with the real instance
-                        const pIdx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token && gb.isSpawning);
-                        if (pIdx !== -1) {
-                            botInstance.token = b.token;
-                            botInstance.botName = b.name;
-                            botInstance.isSpawning = true; // KEEP FLAG ON THE REAL INSTANCE
-                            GLOBAL_BOTS[pIdx] = botInstance;
-                            
-                            // Staggered login
-                            setTimeout(() => {
-                                if (botInstance.isTerminated) return;
-                                console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
-                                
-                                // CLEAR FLAG ONLY AFTER CONNECTED
-                                botInstance.once('ready', () => {
-                                    botInstance.isSpawning = false;
-                                    console.log(`[RUNNER] ${b.name} is now fully operational.`);
-                                });
-
-                                botInstance.login(b.token, b.roomId);
-                            }, 5000);
-                        }
+                        
+                        // Staggered login
+                        setTimeout(() => {
+                            if (botInstance.isTerminated) return;
+                            console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
+                            botInstance.login(b.token, b.roomId);
+                        }, 5000);
                     } catch (e) {
                         console.error(`[SPAWN-ERR] ${b.name}:`, e);
-                        // Cleanup placeholder on failure
-                        const pIdx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token && gb.isSpawning);
+                        // Cleanup on failure
+                        const pIdx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token);
                         if (pIdx !== -1) GLOBAL_BOTS.splice(pIdx, 1);
                     }
                     continue;
                 }
 
-                // Safety: Skip if still in spawning/placeholder phase
-                if (activeBot.isSpawning) continue;
+                // 2. SAFETY: Skip if still booting up
+                if (activeBot.isSpawning || !activeBot.isReadyForTransfer) continue;
 
                 // 2. DETECT ROOM TRANSFER REQUEST
                 if (b.targetRoomId && b.targetRoomId !== b.roomId) {
@@ -2792,10 +2783,11 @@ async function startRunnerLoop() {
                     
                     // SAFE TRANSFER CYCLE (Kills Multilogin ghost sessions)
                     try {
-                        if (activeBot && activeBot.logout) {
+                        if (activeBot && activeBot.logout && activeBot.isReadyForTransfer) {
+                            activeBot.isReadyForTransfer = false; // Block repeat transfers while changing
                             activeBot.logout();
                         } else {
-                            console.warn(`[TRANSFER-WARN] ${b.name} skip: Bot instance not fully ready.`);
+                            // If it hits here, it's just waiting for the current cycle to finish
                             continue;
                         }
                         console.log(`[TRANSFER] ${b.name} logged out. Waiting 15s for session cleanup...`);
