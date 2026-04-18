@@ -153,14 +153,20 @@ const SystemLock = mongoose.model('SystemLock', SystemLockSchema);
 app.use(express.json());
 
 app.get('/', (req, res) => {
-	const uptime = Math.floor((Date.now() - startTime) / 1000);
-	const hours = Math.floor(uptime / 3600);
-	const minutes = Math.floor((uptime % 3600) / 60);
-	const seconds = uptime % 60;
+    const uptime = Math.floor((Date.now() - startTime) / 1000);
+    const hours = Math.floor(uptime / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+    const seconds = uptime % 60;
 
-	const botRows = GLOBAL_BOTS.map(b => `<div class="status-badge"><div class="status-dot" style="background:${b?.connected ? '#00ffa3' : '#ff4b4b'}"></div>${b.botName || 'Bot'} - ${b.roomId || 'Booting...'}</div>`).join('');
+    if (ROLE === 'MASTER' || ROLE === 'BOTH') {
+        const botRows = GLOBAL_BOTS.map(b => `
+            <div class="status-badge">
+                <div class="status-dot" style="background:${b?.connected ? '#00ffa3' : '#ff4b4b'}"></div>
+                ${b.botName || 'Bot'} - ${b.roomId || 'Booting...'}
+            </div>
+        `).join('');
 
-	res.send(`
+        res.send(`
 		<!DOCTYPE html>
 		<html lang="en">
 		<head>
@@ -275,6 +281,37 @@ app.get('/', (req, res) => {
 		</body>
 		</html>
 	`);
+    } else {
+        // Runner Mode Status Page
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>Runner Mode - ${RUNNER_ID}</title>
+                <style>
+                    :root { --bg: #0a0a0c; --card: #16161a; --primary: #7c4dff; --accent: #00ffa3; }
+                    body { margin: 0; font-family: sans-serif; background: var(--bg); color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+                    .status-box { background: var(--card); padding: 4rem; border-radius: 32px; text-align: center; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 0 50px rgba(124, 77, 255, 0.1); }
+                    .id-pill { background: rgba(124, 77, 255, 0.2); color: #7c4dff; padding: 5px 15px; border-radius: 100px; font-weight: bold; font-family: monospace; }
+                    .pulse { font-size: 0.9rem; opacity: 0.6; animation: blink 2s infinite; margin-top: 2rem; }
+                    @keyframes blink { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.7; } }
+                </style>
+            </head>
+            <body>
+                <div class="status-box">
+                    <h1 style="font-size: 3rem; margin: 0;">🤖</h1>
+                    <h2 style="margin: 1rem 0 0.5rem;">Runner Online</h2>
+                    <span class="id-pill">${RUNNER_ID}</span>
+                    <p>Bots Active: ${GLOBAL_BOTS.length}</p>
+                    <p>Uptime: ${hours}h ${minutes}m</p>
+                    <div class="pulse">Watching for assigned jobs...</div>
+                </div>
+                <script>setTimeout(() => location.reload(), 60000);</script>
+            </body>
+            </html>
+        `);
+    }
 });
 
 app.post('/webhook', (req, res) => {
@@ -282,9 +319,8 @@ app.post('/webhook', (req, res) => {
 	res.status(200).send({ status: 'success', message: 'Webhook signal received' });
 });
 
-if (ROLE === 'MASTER' || ROLE === 'BOTH') {
-    app.listen(PORT, () => console.log(`[SERVER] Dashboard live on port ${PORT}`));
-}
+// Always Listen (Required for Render Free tier to keep background runners alive)
+app.listen(PORT, () => console.log(`[SERVER] Web interface online on port ${PORT} (Role: ${ROLE})`));
 
 // Minimal event hooks for visibility
 
