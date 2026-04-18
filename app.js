@@ -2757,12 +2757,20 @@ async function startRunnerLoop() {
                         if (pIdx !== -1) {
                             botInstance.token = b.token;
                             botInstance.botName = b.name;
+                            botInstance.isSpawning = true; // KEEP FLAG ON THE REAL INSTANCE
                             GLOBAL_BOTS[pIdx] = botInstance;
                             
                             // Staggered login
                             setTimeout(() => {
                                 if (botInstance.isTerminated) return;
                                 console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
+                                
+                                // CLEAR FLAG ONLY AFTER CONNECTED
+                                botInstance.once('ready', () => {
+                                    botInstance.isSpawning = false;
+                                    console.log(`[RUNNER] ${b.name} is now fully operational.`);
+                                });
+
                                 botInstance.login(b.token, b.roomId);
                             }, 5000);
                         }
