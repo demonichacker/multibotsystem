@@ -2763,6 +2763,9 @@ async function startRunnerLoop() {
     setInterval(async () => {
         try {
             const assignedBots = await BotConfig.find({ assignedRunnerId: RUNNER_ID });
+            if (assignedBots.length > 0 || Date.now() % 60000 < 5000) {
+                console.log(`[LOOP-HEARTBEAT] Runner ${RUNNER_ID}: Found ${assignedBots.length} assigned bots.`);
+            }
             const dbTokens = assignedBots.map(b => b.token);
 
             // --- CLEANUP STEP: Stop bots that were deleted or EXPIRED ---
