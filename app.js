@@ -2784,13 +2784,21 @@ async function startRunnerLoop() {
             }
             
             // --- SYNC STEP: Start or Transfer bots ---
-            for (const b of assignedBots) {
+			for (const b of assignedBots) {
                 // Skip if expired (unless permanent)
                 if (!b.isPermanent && b.expiresAt && new Date() > b.expiresAt) continue;
 
                 // 1. IS BOT SPAWNED LOCALLY?
-                let activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
+                const activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
                 
+                // DIAGNOSTIC TRACE
+                if (!activeBot) {
+                    console.log(`[LOOP-TRACE] ${b.name}: No active bot instance found.`);
+                } else {
+                    console.log(`[LOOP-TRACE] ${b.name}: Ready=${activeBot.isReadyForTransfer}, Spawning=${activeBot.isSpawning}, TargetRoom=${b.targetRoomId === b.roomId ? 'SYNCED' : 'PENDING'}`);
+                }
+
+                // 1. SPAWN IF MISSING
                 if (!activeBot) {
                     console.log(`[RUNNER] Found new bot job: ${b.name}. Spawning...`);
                     
