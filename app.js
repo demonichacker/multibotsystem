@@ -363,6 +363,7 @@ async function spawnBot(botConfig) {
     bot.token = token;
     bot.isSpawning = true;
     bot.isReadyForTransfer = false;
+    bot.spawnTime = Date.now();
 
     // Register immediately to prevent race conditions
     GLOBAL_BOTS.push(bot);
@@ -2791,6 +2792,15 @@ async function startRunnerLoop() {
                 // 1. IS BOT SPAWNED LOCALLY?
                 const activeBot = GLOBAL_BOTS.find(gb => gb.token === b.token);
                 
+                // --- SELF-HEALING: Restart if stuck in spawning for > 2 mins ---
+                if (activeBot && activeBot.isSpawning && (Date.now() - activeBot.spawnTime) > 120000) {
+                    console.log(`[HEAL] ${b.name} stuck in spawning for 2 mins. Force restarting...`);
+                    try { if (activeBot.logout) activeBot.logout(); } catch(e){}
+                    const idx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token);
+                    if (idx !== -1) GLOBAL_BOTS.splice(idx, 1);
+                    continue; // Will respawn on next iteration
+                }
+
                 // DIAGNOSTIC TRACE
                 if (!activeBot) {
                     console.log(`[LOOP-TRACE] ${b.name}: No active bot instance found.`);
