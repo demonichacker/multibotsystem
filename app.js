@@ -9,7 +9,7 @@ const BotConfigSchema = new mongoose.Schema({
     token: { type: String, unique: true }, 
     roomId: String, // The room the bot is ACTUALLY in currently
     targetRoomId: String, // The room we WANT the bot to go to
-    assignedRunnerId: { type: String, default: 'default_runner' }, // Which server owns this bot
+    assignedRunnerId: { type: String, default: 'cloud_runner_1' }, // Which server owns this bot
     isOnline: { type: Boolean, default: false },
     addedBy: String, 
     ownerConversationId: String, 
@@ -393,7 +393,9 @@ async function spawnBot(botConfig) {
 		saveState();
 
         // --- ORCHESTRATOR STATUS UPDATE ---
-        await BotConfig.updateOne({ token: bot.token }, { isOnline: true });
+        const currentRoom = session.room_info?.room_id || bot.roomId;
+        bot.roomId = currentRoom; // Ensure instance is in sync
+        await BotConfig.updateOne({ token: bot.token }, { isOnline: true, roomId: currentRoom });
 
 		// --- SILENT MEMBERSHIP CHECK LOOP ---
         // Prevents "Not in room" errors by waiting until the bot is physically present
@@ -2718,10 +2720,10 @@ async function bootstrapMultiBot() {
             // --- MIGRATION: Auto-assign "homeless" bots to default runner ---
             const homeless = await BotConfig.updateMany(
                 { assignedRunnerId: { $exists: false } }, 
-                { assignedRunnerId: 'default_runner' }
+                { assignedRunnerId: 'cloud_runner_1' }
             );
             if (homeless.modifiedCount > 0) {
-                console.log(`[MASTER] Assigned ${homeless.modifiedCount} homeless bots to default_runner.`);
+                console.log(`[MASTER] Assigned ${homeless.modifiedCount} homeless bots to cloud_runner_1.`);
             }
 
             // --- MIGRATION: Ensure all bots have an expiry date ---
@@ -2741,7 +2743,7 @@ async function bootstrapMultiBot() {
                     token: process.env.BOT_TOKEN, 
                     roomId: process.env.ROOM_ID, 
                     targetRoomId: process.env.ROOM_ID,
-                    assignedRunnerId: 'default_runner' 
+                    assignedRunnerId: 'cloud_runner_1' 
                 });
                 await newBot.save();
             }
