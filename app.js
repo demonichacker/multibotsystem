@@ -2842,14 +2842,16 @@ async function startRunnerLoop() {
                     
                     // SAFE TRANSFER CYCLE (Kills Multilogin ghost sessions)
                     try {
-                        if (activeBot && activeBot.logout && activeBot.isReadyForTransfer) {
-                            activeBot.isReadyForTransfer = false; // Block repeat transfers while changing
-                            activeBot.logout();
+                        const canLogout = activeBot && (typeof activeBot.logout === 'function' || typeof activeBot.close === 'function');
+                        if (canLogout && activeBot.isReadyForTransfer) {
+                            activeBot.isReadyForTransfer = false; // Block repeat transfers
+                            if (typeof activeBot.logout === 'function') activeBot.logout();
+                            else if (typeof activeBot.close === 'function') activeBot.close();
                         } else {
-                            // If it hits here, it's just waiting for the current cycle to finish
+                            // Waiting for readiness
                             continue;
                         }
-                        console.log(`[TRANSFER] ${b.name} logged out. Waiting 15s for session cleanup...`);
+                        console.log(`[TRANSFER] ${b.name} session closed. Waiting 15s for cleanup...`);
                         
                         // Update current room ID in DB to "BOOTING" to prevent repeat loops
                         await BotConfig.updateOne({ token: b.token }, { roomId: 'TRANSFERRING' });
