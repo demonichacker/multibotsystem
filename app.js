@@ -2818,9 +2818,10 @@ async function startRunnerLoop() {
 
                 // 1. SPAWN IF MISSING
                 if (!activeBot) {
-                    console.log(`[RUNNER] Found new bot job: ${b.name}. Spawning...`);
+                    console.log(`[SPAWN-TRACE] Found offline job: ${b.name}. Checking for recent spawn attempts...`);
                     
                     try {
+                        console.log(`[SPAWN-TRACE] Triggering spawnBot for ${b.name} (Room: ${b.roomId})`);
                         const botInstance = await spawnBot(b);
                         
                         // Staggered login
