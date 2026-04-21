@@ -1314,6 +1314,9 @@ async function spawnBot(botConfig) {
 		"boo": "emote-boo",
 		"homerun": "emote-baseball",
 		"fallingapart": "emote-apart",
+		"sweetstrike": "emote-sugarbite-pose1",
+		"sweetfix": "emote-sugarbite-pose2",
+		"sweetlure": "emote-sugarbite-pose3",
 
 		"thumbsup": "emoji-thumbsup",
 		"point": "emoji-there",
