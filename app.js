@@ -1314,12 +1314,6 @@ async function spawnBot(botConfig) {
 		"boo": "emote-boo",
 		"homerun": "emote-baseball",
 		"fallingapart": "emote-apart",
-		"sweetstrike": "emote-sugarbite-pose1",
-		"sweet1": "emote-sugarbite-pose1",
-		"sweetfix": "emote-sugarbite-pose2",
-		"sweet2": "emote-sugarbite-pose2",
-		"sweetlure": "emote-sugarbite-pose3",
-		"sweet3": "emote-sugarbite-pose3",
 
 		"thumbsup": "emoji-thumbsup",
 		"point": "emoji-there",
@@ -1451,7 +1445,10 @@ async function spawnBot(botConfig) {
 		"midnightpose": "emote-pose-goth1",
 		"chaoscutie": "emote-punkandlaces-pose1",
 		"rebeldarling": "emote-punkandlaces-pose2",
-		"sweettease": "emote-punkandlaces-pose3"
+		"sweettease": "emote-punkandlaces-pose3",
+		"sweetstrike": "emote-sugarbite-pose1",
+		"sweetfix": "emote-sugarbite-pose2",
+		"sweetlure": "emote-sugarbite-pose3"
 	};
 	const EMOTE_KEYS = Object.keys(EMOTE_MAP);
 	const EMOTE_LIST = Object.values(EMOTE_MAP);
