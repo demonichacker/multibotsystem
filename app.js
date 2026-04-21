@@ -394,9 +394,11 @@ async function spawnBot(botConfig) {
 		saveState();
 
         // --- ORCHESTRATOR STATUS UPDATE ---
-        const currentRoom = session.room_info?.room_id || bot.roomId;
-        bot.roomId = currentRoom; // Ensure instance is in sync
-        await BotConfig.updateOne({ token: bot.token }, { isOnline: true, roomId: currentRoom });
+        const physicalRoom = session.room_info?.room_id || bot.botConfig?.roomId;
+        bot.currentPhysicalRoomId = physicalRoom; 
+        
+        // Sync DB to physical reality
+        await BotConfig.updateOne({ token: bot.token }, { isOnline: true });
 
 		// --- SILENT MEMBERSHIP CHECK LOOP ---
         // Prevents "Not in room" errors by waiting until the bot is physically present
@@ -2842,7 +2844,21 @@ async function startRunnerLoop() {
                 // 2. SAFETY: Skip if still booting up
                 if (activeBot.isSpawning || !activeBot.isReadyForTransfer) continue;
 
-                // 2. DETECT ROOM TRANSFER REQUEST
+                // 3. PHYSICAL REALITY SYNC: Detect if bot is stuck in the wrong physical room
+                if (activeBot.currentPhysicalRoomId && b.roomId && activeBot.currentPhysicalRoomId !== b.roomId) {
+                    console.log(`[REALITY-SYNC] ${b.name} mismatch! Physical=${activeBot.currentPhysicalRoomId} != DB=${b.roomId}. Resetting...`);
+                    try {
+                        if (typeof activeBot.logout === 'function') activeBot.logout();
+                        else if (typeof activeBot.close === 'function') activeBot.close();
+                        
+                        const idx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token);
+                        if (idx !== -1) GLOBAL_BOTS.splice(idx, 1);
+                        // The next loop will see it missing and spawn it in b.roomId
+                    } catch (e) { console.error(`[REALITY-SYNC-ERR] ${b.name}:`, e); }
+                    continue;
+                }
+
+                // 4. DETECT ROOM TRANSFER REQUEST (Database change)
                 if (b.targetRoomId && b.targetRoomId !== b.roomId) {
                     console.log(`[TRANSFER] ${b.name} room change detected: ${b.roomId} -> ${b.targetRoomId}`);
                     
