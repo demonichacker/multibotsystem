@@ -460,8 +460,7 @@ async function spawnBot(botConfig) {
 				// 1. Invites Handling Pipeline (Via Shared Room Link)
 				if (state.waitingForInviteUser === userId) {
 					// Improved regex to handle various Highrise room link formats and raw IDs
-					const roomLinkMatch = latestMsg.content.match(/\/room[s]?\/([a-fA-F0-9]{24})/i) ||
-						latestMsg.content.match(/room_id=([a-fA-F0-9]{24})/i) ||
+					const roomLinkMatch = latestMsg.content.match(/(?:room[s]?\/|room_id=|id=)([a-fA-F0-9]{24})/i) ||
 						latestMsg.content.match(/\b([a-fA-F0-9]{24})\b/);
 
 					if (roomLinkMatch) {
@@ -2851,17 +2850,14 @@ async function startRunnerLoop() {
                             // Waiting for readiness
                             continue;
                         }
-                        console.log(`[TRANSFER] ${b.name} session closed. Waiting 15s for cleanup...`);
+                        console.log(`[TRANSFER] ${b.name} session closed. Cleaning up for fresh spawn...`);
                         
-                        // Update current room ID in DB to "BOOTING" to prevent repeat loops
-                        await BotConfig.updateOne({ token: b.token }, { roomId: 'TRANSFERRING' });
+                        // 1. Remove from local memory so the next loop cycle treats it as a fresh job
+                        const idx = GLOBAL_BOTS.findIndex(gb => gb.token === b.token);
+                        if (idx !== -1) GLOBAL_BOTS.splice(idx, 1);
 
-                        setTimeout(async () => {
-                            console.log(`[TRANSFER] Re-logging ${b.name} into target room: ${b.targetRoomId}`);
-                            activeBot.login(b.token, b.targetRoomId);
-                            // Update DB after successful login attempt
-                            await BotConfig.updateOne({ token: b.token }, { roomId: b.targetRoomId });
-                        }, 15000);
+                        // 2. Update DB: Set current roomId to the targetRoomId so the next spawn goes to the right place
+                        await BotConfig.updateOne({ token: b.token }, { roomId: b.targetRoomId });
                     } catch (e) { console.error(`[TRANSFER-ERR]`, e); }
                 }
             }
