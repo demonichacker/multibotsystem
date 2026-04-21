@@ -1498,7 +1498,10 @@ async function spawnBot(botConfig) {
 		'emote-pose-goth1': 4000,
 		'emote-punkandlaces-pose1': 4000,
 		'emote-punkandlaces-pose2': 4000,
-		'emote-punkandlaces-pose3': 4000
+		'emote-punkandlaces-pose3': 4000,
+		'emote-sugarbite-pose1': 15000,
+		'emote-sugarbite-pose2': 15000,
+		'emote-sugarbite-pose3': 15000
 	};
 
 	const cooldowns = new Map(); // per-bot, declared inside spawnBot closure
