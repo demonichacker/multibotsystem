@@ -341,6 +341,7 @@ async function spawnBot(botConfig) {
 	// Create bot instance with common intents
 	const bot = new Highrise(
 		{
+			token: botConfig.token,
 			intents: [
 				GatewayIntentBits.Ready,
 				GatewayIntentBits.Messages,
