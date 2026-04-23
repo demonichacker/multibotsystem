@@ -2794,8 +2794,14 @@ async function startRunnerLoop() {
                 }
             }
             
-            // --- SYNC STEP: Start or Transfer bots ---
-			for (const b of assignedBots) {
+            // --- SYNC STEP: Start or Transfer ---
+            // --- FLEET WIDE FINGERPRINT CHECK ---
+            for (const b of assignedBots) {
+                const tokenFingerprint = b.token ? b.token.substring(0, 5) + '...' : 'MISSING';
+                console.log(`[DEBUG-FINGERPRINT] ${b.name}: Token=${tokenFingerprint}, Room=${b.roomId}`);
+            }
+
+            for (const b of assignedBots) {
                 // Skip if expired (unless permanent)
                 if (!b.isPermanent && b.expiresAt && new Date() > b.expiresAt) continue;
 
