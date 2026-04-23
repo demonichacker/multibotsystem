@@ -2829,12 +2829,13 @@ async function startRunnerLoop() {
                         // Staggered login
                         setTimeout(() => {
                             if (botInstance.isTerminated) return;
-                            console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
+                            console.log(`[RUNNER-DEBUG] ${b.name} token length: ${b.token ? b.token.length : 0}`);
                             
                             // Detach old listeners if any and add diagnostic error handler
                             botInstance.on('error', (err) => {
-                                console.error(`[AUTH-ERR] ${b.name} FAILED:`, err.message);
-                                if (err.message.includes('not authorized') || err.message.includes('invalid')) {
+                                const errMsg = (err && err.message) || 'Secret Error';
+                                console.error(`[AUTH-ERR] ${b.name} FAILED:`, errMsg);
+                                if (errMsg.toLowerCase().includes('not authorized') || errMsg.toLowerCase().includes('invalid')) {
                                     BotConfig.updateOne({ token: b.token }, { isOnline: false }).catch(() => {});
                                 }
                             });
