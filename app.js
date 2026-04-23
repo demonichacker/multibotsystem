@@ -2830,6 +2830,15 @@ async function startRunnerLoop() {
                         setTimeout(() => {
                             if (botInstance.isTerminated) return;
                             console.log(`[RUNNER] Logging in ${b.name} to room ${b.roomId}...`);
+                            
+                            // Detach old listeners if any and add diagnostic error handler
+                            botInstance.on('error', (err) => {
+                                console.error(`[AUTH-ERR] ${b.name} FAILED:`, err.message);
+                                if (err.message.includes('not authorized') || err.message.includes('invalid')) {
+                                    BotConfig.updateOne({ token: b.token }, { isOnline: false }).catch(() => {});
+                                }
+                            });
+
                             botInstance.login(b.token, b.roomId);
                         }, 5000);
                     } catch (e) {
