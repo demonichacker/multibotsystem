@@ -359,8 +359,12 @@ async function spawnBot(botConfig) {
 		},
 		settings.reconnect
 	);
-	bot.botName = botName;
-	bot.botConfig = botConfig;
+    
+    // Identity tags for the Orchestrator
+	bot.name = botName;
+    bot.instanceToken = botConfig.token;
+	bot.roomId = roomId;
+    bot.botConfig = botConfig; 
     bot.token = token;
     bot.isSpawning = true;
     bot.isReadyForTransfer = false;
@@ -2823,6 +2827,18 @@ async function startRunnerLoop() {
                     console.log(`[LOOP-TRACE] ${b.name}: No active bot instance found.`);
                 } else {
                     console.log(`[LOOP-TRACE] ${b.name}: Ready=${activeBot.isReadyForTransfer}, Spawning=${activeBot.isSpawning}, TargetRoom=${b.targetRoomId === b.roomId ? 'SYNCED' : 'PENDING'}`);
+                }
+
+                // 0. TOKEN SYNC: If the database token changed, the memory instance is garbage.
+                if (activeBot && activeBot.instanceToken && activeBot.instanceToken !== b.token) {
+                    console.log(`[TOKEN-SYNC] ${b.name} token mismatch! Evicting ghost instance...`);
+                    try {
+                        if (typeof activeBot.logout === 'function') activeBot.logout();
+                        if (typeof activeBot.close === 'function') activeBot.close();
+                        const idx = GLOBAL_BOTS.findIndex(gb => gb.instanceToken === activeBot.instanceToken);
+                        if (idx !== -1) GLOBAL_BOTS.splice(idx, 1);
+                        activeBot = null; // Force a re-spawn below
+                    } catch (e) { console.error(`[TOKEN-SYNC-ERR] ${b.name}:`, e); }
                 }
 
                 // 1. SPAWN IF MISSING
