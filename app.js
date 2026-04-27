@@ -2487,6 +2487,7 @@ async function spawnBot(botConfig) {
 		'!punch': async (sender, args, isDm) => {
 			const targetId = await resolveUserIdByMention(args[1]);
 			if (!targetId) return send(isDm ? sender.id : null, 'User not found.', isDm);
+			if (isProtected(targetId)) return send(isDm ? sender.id : null, 'User is protected.', isDm);
 
 			bot.player.emote(sender.id, EMOTE_MAP['punch'] || 'emoji-punch');
 			bot.player.emote(targetId, EMOTE_MAP['collapse'] || 'emote-death2');
@@ -2495,6 +2496,7 @@ async function spawnBot(botConfig) {
 		'!cut': async (sender, args, isDm) => {
 			const targetId = await resolveUserIdByMention(args[1]);
 			if (!targetId) return send(isDm ? sender.id : null, 'User not found.', isDm);
+			if (isProtected(targetId)) return send(isDm ? sender.id : null, 'User is protected.', isDm);
 
 			bot.player.emote(sender.id, EMOTE_MAP['swordfight'] || 'emote-swordfight');
 			bot.player.emote(targetId, EMOTE_MAP['fallingapart'] || 'emote-apart');
@@ -2503,6 +2505,7 @@ async function spawnBot(botConfig) {
 		'!bomb': async (sender, args, isDm) => {
 			const targetId = await resolveUserIdByMention(args[1]);
 			if (!targetId) return send(isDm ? sender.id : null, 'User not found.', isDm);
+			if (isProtected(targetId)) return send(isDm ? sender.id : null, 'User is protected.', isDm);
 
 			bot.player.emote(sender.id, EMOTE_MAP['energyball'] || 'emote-energyball');
 			bot.player.emote(targetId, EMOTE_MAP['faint'] || 'emote-fainting');
@@ -2531,6 +2534,7 @@ async function spawnBot(botConfig) {
 		'!slap': async (sender, args, isDm) => {
 			const targetId = await resolveUserIdByMention(args[1]);
 			if (!targetId) return send(isDm ? sender.id : null, 'User not found.', isDm);
+			if (isProtected(targetId)) return send(isDm ? sender.id : null, 'User is protected.', isDm);
 
 			bot.player.emote(sender.id, EMOTE_MAP['slap'] || 'emote-slap');
 			bot.player.emote(targetId, EMOTE_MAP['stunned'] || 'emoji-dizzy');
